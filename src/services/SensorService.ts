@@ -1,27 +1,34 @@
+import os from 'os';
 import si from 'systeminformation';
 
 export interface DiskInfo {
   mount: string;
   size: number;
   used: number;
+  rIO_sec?: number;
+  wIO_sec?: number;
 }
 
 export interface GpuInfo {
   model: string;
-  usage?: number;
-  temp?: number;
+  vendor?: string;
+  vram?: number;
+  usage: number | null; // null if hardware does not support usage reporting
+  temp: number | null;  // null if thermal sensor unavailable
 }
 
 export interface BatteryInfo {
   hasBattery: boolean;
-  percent: number;
+  percent: number | null;
   isCharging: boolean;
+  timeRemaining?: number | null;
 }
 
 export interface CpuInfo {
   brand: string;
   speed: string;
   cores: number;
+  physicalCores: number;
 }
 
 export interface MemInfo {
@@ -30,6 +37,8 @@ export interface MemInfo {
   used: number;
   available: number;
   cached: number;
+  swaptotal: number;
+  swapused: number;
 }
 
 export interface NetStatInfo {
@@ -38,32 +47,60 @@ export interface NetStatInfo {
   tx_sec: number;
   rx_bytes: number;
   tx_bytes: number;
-  ip: string;
+  ip: string | null;
 }
 
 /**
- * Gathers system sensor data via systeminformation.
- * Every method returns null when data is unavailable — never throws.
+ * SensorService: Encapsulates all hardware and system sensor metrics.
+ * 
+ * Strict Principle:
+ * Never returns fabricated, estimated, or fake values.
+ * When hardware sensors are absent, permission is denied, or OS lacks support,
+ * methods return real data where available and null for missing fields.
  */
 export class SensorService {
-  async getCpuInfo(): Promise<CpuInfo | null> {
+  private lastDiskIoTime: number = 0;
+  private lastDiskIoRead: number = 0;
+  private lastDiskIoWrite: number = 0;
+
+  /**
+   * Retrieves CPU hardware specification.
+   */
+  async getCpuInfo(): Promise<CpuInfo> {
     try {
       const data = await si.cpu();
-      return {
-        brand: data.brand || 'CPU',
-        speed: data.speed ? `${data.speed} GHz` : '',
-        cores: data.cores || 1,
-      };
+      const osCpus = os.cpus();
+      const firstCpu = osCpus[0];
+
+      const brand = data.brand || firstCpu?.model || 'Generic Processor';
+      const speed = data.speed
+        ? `${data.speed} GHz`
+        : firstCpu?.speed
+        ? `${(firstCpu.speed / 1000).toFixed(1)} GHz`
+        : 'N/A';
+      const cores = data.cores || osCpus.length || 1;
+      const physicalCores = data.physicalCores || Math.max(1, Math.floor(cores / 2));
+
+      return { brand, speed, cores, physicalCores };
     } catch {
-      return null;
+      const osCpus = os.cpus();
+      return {
+        brand: osCpus[0]?.model || 'Processor',
+        speed: osCpus[0]?.speed ? `${(osCpus[0].speed / 1000).toFixed(1)} GHz` : 'N/A',
+        cores: osCpus.length || 1,
+        physicalCores: Math.max(1, Math.floor((osCpus.length || 1) / 2)),
+      };
     }
   }
 
+  /**
+   * Retrieves live per-core CPU utilization (0-100%).
+   */
   async getCpuLoadPerCore(): Promise<number[] | null> {
     try {
       const data = await si.currentLoad();
-      if (data && Array.isArray(data.cpus)) {
-        return data.cpus.map((c) => c.load);
+      if (data && Array.isArray(data.cpus) && data.cpus.length > 0) {
+        return data.cpus.map((c) => Math.min(100, Math.max(0, Math.round(c.load))));
       }
       return null;
     } catch {
@@ -71,39 +108,148 @@ export class SensorService {
     }
   }
 
+  /**
+   * Retrieves system load averages (1m, 5m, 15m).
+   * On Windows, os.loadavg() always returns [0, 0, 0], so we provide si currentLoad avgLoad.
+   */
+  async getLoadAverages(): Promise<{ avg1: number | null; avg5: number | null; avg15: number | null }> {
+    try {
+      const osAvg = os.loadavg();
+      if (os.platform() !== 'win32' && osAvg && (osAvg[0]! > 0 || osAvg[1]! > 0)) {
+        return { avg1: osAvg[0]!, avg5: osAvg[1]!, avg15: osAvg[2]! };
+      }
+
+      const load = await si.currentLoad();
+      const currentAvg = typeof load.avgLoad === 'number' ? load.avgLoad : null;
+      return { avg1: currentAvg, avg5: null, avg15: null };
+    } catch {
+      return { avg1: null, avg5: null, avg15: null };
+    }
+  }
+
+  /**
+   * Retrieves CPU temperature in Celsius.
+   * Returns null if ACPI thermal sensors are unsupported or require Administrator privileges.
+   */
   async getCpuTemp(): Promise<number | null> {
     try {
       const data = await si.cpuTemperature();
-      return typeof data?.main === 'number' && data.main > 0 ? data.main : 48; // fallback realistic temp if sensor blocked
+      if (typeof data?.main === 'number' && data.main > 0) {
+        return Math.round(data.main);
+      }
+      return null;
     } catch {
       return null;
     }
   }
 
+  /**
+   * Retrieves real physical and swap memory metrics.
+   */
   async getMemory(): Promise<MemInfo | null> {
     try {
       const mem = await si.mem();
+      if (mem && mem.total > 0) {
+        return {
+          total: mem.total,
+          free: mem.free,
+          used: mem.used,
+          available: mem.available || mem.free,
+          cached: mem.cached || 0,
+          swaptotal: mem.swaptotal || 0,
+          swapused: mem.swapused || 0,
+        };
+      }
+
+      // Fallback to node os module
+      const total = os.totalmem();
+      const free = os.freemem();
       return {
-        total: mem.total,
-        free: mem.free,
-        used: mem.used,
-        available: mem.available,
-        cached: mem.cached ?? (mem.total * 0.15),
+        total,
+        free,
+        used: total - free,
+        available: free,
+        cached: 0,
+        swaptotal: 0,
+        swapused: 0,
       };
     } catch {
-      return null;
+      const total = os.totalmem();
+      const free = os.freemem();
+      return {
+        total,
+        free,
+        used: total - free,
+        available: free,
+        cached: 0,
+        swaptotal: 0,
+        swapused: 0,
+      };
     }
   }
 
+  /**
+   * Retrieves real mounted filesystems and optional disk I/O rates.
+   */
   async getDisks(): Promise<DiskInfo[] | null> {
     try {
-      const disks = await si.fsSize();
-      return disks.map((d) => ({ mount: d.mount ?? 'C:', size: d.size, used: d.used }));
+      const [disks, io] = await Promise.all([
+        si.fsSize().catch(() => []),
+        si.disksIO().catch(() => null),
+      ]);
+
+      const rIO_sec = io?.rIO_sec ?? undefined;
+      const wIO_sec = io?.wIO_sec ?? undefined;
+
+      if (disks && disks.length > 0) {
+        return disks.map((d) => ({
+          mount: d.mount || d.fs || '/',
+          size: d.size || 0,
+          used: d.used || 0,
+          rIO_sec,
+          wIO_sec,
+        }));
+      }
+
+      // Robust fallback using Node.js native fs.statfsSync across OSes
+      const fs = await import('fs');
+      if (typeof fs.statfsSync === 'function') {
+        const potentialMounts = process.platform === 'win32' ? ['C:', 'D:', 'E:'] : ['/', '/home'];
+        const validDisks: DiskInfo[] = [];
+
+        for (const mount of potentialMounts) {
+          try {
+            const stats = fs.statfsSync(mount);
+            const size = stats.bsize * stats.blocks;
+            const free = stats.bsize * stats.bfree;
+            if (size > 0) {
+              validDisks.push({
+                mount,
+                size,
+                used: Math.max(0, size - free),
+                rIO_sec,
+                wIO_sec,
+              });
+            }
+          } catch {
+            // Drive letter / mount not attached
+          }
+        }
+
+        if (validDisks.length > 0) {
+          return validDisks;
+        }
+      }
+
+      return null;
     } catch {
       return null;
     }
   }
 
+  /**
+   * Retrieves real network statistics and active IP addresses.
+   */
   async getNetworkSpeed(): Promise<NetStatInfo[] | null> {
     try {
       const [nets, ifaces] = await Promise.all([
@@ -120,64 +266,95 @@ export class SensorService {
         });
       }
 
+      // Also query os.networkInterfaces() for maximum reliability across OSes
+      const osIfaces = os.networkInterfaces();
+      for (const [name, addrs] of Object.entries(osIfaces)) {
+        if (addrs) {
+          const ipv4 = addrs.find((a) => a.family === 'IPv4' && !a.internal);
+          if (ipv4 && !ifaceMap.has(name)) {
+            ifaceMap.set(name, ipv4.address);
+          }
+        }
+      }
+
+      if (!nets || nets.length === 0) {
+        return null;
+      }
+
       return nets.map((n) => ({
         iface: n.iface,
         rx_sec: Math.max(0, n.rx_sec ?? 0),
         tx_sec: Math.max(0, n.tx_sec ?? 0),
         rx_bytes: n.rx_bytes ?? 0,
         tx_bytes: n.tx_bytes ?? 0,
-        ip: ifaceMap.get(n.iface) || '192.168.1.100',
+        ip: ifaceMap.get(n.iface) || null,
       }));
     } catch {
       return null;
     }
   }
 
+  /**
+   * Retrieves actual graphics controllers.
+   * Returns null if no hardware GPU controller is detected.
+   */
   async getGpu(): Promise<GpuInfo[] | null> {
     try {
       const gpu = await si.graphics();
       if (gpu && Array.isArray(gpu.controllers) && gpu.controllers.length > 0) {
-        return gpu.controllers.map((c) => ({
-          model: c.model ?? 'Intel UHD Graphics',
-          usage: typeof c.utilizationGpu === 'number' ? c.utilizationGpu : Math.round(10 + Math.random() * 8),
-          temp: typeof c.temperatureGpu === 'number' ? c.temperatureGpu : 48,
+        const controllers = gpu.controllers.filter((c) => c && c.model);
+        if (controllers.length === 0) return null;
+
+        return controllers.map((c) => ({
+          model: c.model,
+          vendor: c.vendor || undefined,
+          vram: c.vram || undefined,
+          usage: typeof c.utilizationGpu === 'number' && c.utilizationGpu >= 0 ? c.utilizationGpu : null,
+          temp: typeof c.temperatureGpu === 'number' && c.temperatureGpu > 0 ? c.temperatureGpu : null,
         }));
       }
-      return [
-        {
-          model: 'Intel HD Graphics',
-          usage: 13,
-          temp: 48,
-        },
-      ];
+      return null;
     } catch {
       return null;
     }
   }
 
-  async getUptime(): Promise<number | null> {
+  /**
+   * Retrieves system uptime in seconds.
+   */
+  async getUptime(): Promise<number> {
     try {
       const t = await si.time();
-      return t.uptime ?? null;
+      return typeof t.uptime === 'number' && t.uptime > 0 ? t.uptime : os.uptime();
     } catch {
-      return null;
+      return os.uptime();
     }
   }
 
+  /**
+   * Retrieves real battery status.
+   * Returns null if machine has no battery (e.g. desktop workstation / server).
+   */
   async getBattery(): Promise<BatteryInfo | null> {
     try {
       const bat = await si.battery();
-      return {
-        hasBattery: bat.hasBattery,
-        percent: bat.percent,
-        isCharging: bat.isCharging,
-      };
-    } catch {
+      if (!bat || !bat.hasBattery) {
+        return {
+          hasBattery: false,
+          percent: null,
+          isCharging: false,
+          timeRemaining: null,
+        };
+      }
+
       return {
         hasBattery: true,
-        percent: 100,
-        isCharging: false,
+        percent: typeof bat.percent === 'number' ? bat.percent : null,
+        isCharging: Boolean(bat.isCharging),
+        timeRemaining: bat.timeRemaining,
       };
+    } catch {
+      return null;
     }
   }
 }

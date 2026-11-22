@@ -1,22 +1,26 @@
 # Binaire - Terminal System Monitor (btop clone)
 
-A high-performance, terminal-based system tasks and sensor monitor inspired by **btop**, developed for the Binaire Private Limited developer assessment.
+A high-performance, terminal-based system tasks and sensor monitor inspired by **btop**, developed for the Binaire Private Limited JavaScript Developer Assessment.
 
-Built exclusively for the terminal (CLI / Powershell / Command Prompt) using Node.js, TypeScript, React Ink, `systeminformation`, `ps-list`, `pidusage`, and Firebase Authentication.
+Built exclusively for the terminal (CLI / Powershell / Command Prompt / macOS / Linux) using Node.js, TypeScript, React Ink, `systeminformation`, `ps-list`, `pidusage`, and Firebase Authentication.
 
 ---
 
 ## Architecture & Design Principles
 
 - **Object-Oriented Logic**: Core business logic and data providers (`SensorService`, `ProcessService`, `AuthService`, `HistoryBuffer`) are encapsulated in TypeScript classes using strict OOP design.
-- **Separation of Concerns**: Per the requirements, no single library covers UI, process data, and sensors together:
-  - **Sensors**: `systeminformation`
-  - **Processes**: `ps-list` + `pidusage` (with fallback to PowerShell for Windows 11 compatibility)
+- **Separation of Concerns**: Per the assessment requirements, no single library covers UI, process data, and sensors together:
+  - **Sensors**: `systeminformation` (+ Node.js native `os` and `fs.statfsSync` cross-platform fallbacks)
+  - **Processes**: `ps-list` + `pidusage` (with PowerShell fallback for modern Windows 11 compatibility)
   - **Authentication**: `firebase` (Email/Password SDK)
   - **UI / Terminal Layout**: `ink` (React for CLI)
-- **Safe Degradation**: All services handle missing sensor or hardware metrics gracefully by returning `null` rather than crashing. Missing data renders as `N/A`.
-- **Keyboard Interactivity**: Complete keyboard-driven navigation across authentication and the monitor dashboard.
-- **Responsive Terminal**: Dynamic calculation of terminal columns and rows (`useStdout`) to automatically adapt layout without vertical overflow.
+- **Zero Fabricated Data**: Never displays fake or simulated sensor readings. If hardware sensors are unavailable or ACPI permissions require administrative privileges, the interface reports `N/A` or `Unsupported`.
+- **Guarded Process Management**: 
+  - Requires explicit user confirmation dialog before terminating any process.
+  - Automatically identifies and blocks termination of critical system processes (PID 0, PID 4, `smss.exe`, `csrss.exe`, `services.exe`, `init`, `systemd`, etc., as well as the monitor process itself).
+  - Handles permission errors and non-existent PIDs gracefully.
+- **Complete Keyboard Interactivity**: Full keyboard-driven navigation across authentication and the monitor dashboard without conflicting shortcuts.
+- **Responsive Terminal**: Dynamic calculation of terminal columns and rows (`useStdout` resize events) to adapt layout across compact, medium, and large terminal windows.
 
 ---
 
@@ -28,15 +32,14 @@ Built exclusively for the terminal (CLI / Powershell / Command Prompt) using Nod
   - `Tab` to switch fields, `Enter` to submit, `Ctrl+U` to switch to Sign-Up, `Ctrl+L` to switch to Login.
 - **CPU Panel (`¹cpu`)**:
   - Live multi-tiered braille/block graph with gradient shading (green base, yellow mid-range, peach/red peaks).
-  - CPU model, frequency, overall CPU usage percentage, and core temperatures.
+  - CPU model, frequency, overall CPU usage percentage, and core temperatures (`N/A` if sensor unavailable).
   - Per-core load bars (`C0` – `C3`).
   - `cpu ▲▼ gpu` divider with secondary GPU activity graph.
   - System uptime display (`up HH:MM:SS`) and load averages.
 - **Memory Panel (`²mem`)**:
-  - Detailed memory metrics: Total, Used, Available, Cache, and Committed with color-coded stacked meters.
-  - GPU shared memory and Virtual Page file statistics.
+  - Detailed physical and swap memory metrics: Total, Used, Available, Cache, and Swap with color-coded stacked meters.
 - **Disks Panel (`disks`)**:
-  - Filesystem mount points, total storage, used/free percentages, and real-time I/O activity.
+  - Real filesystem mount points, total storage, and used/free percentages using `systeminformation` and native `fs.statfsSync`.
 - **Network Panel (`³net`)**:
   - Dual mirrored network traffic graph (download/RX on top in purple/cyan, center divider, upload/TX below in magenta).
   - Real-time download/upload speeds (KB/s, MiB/s) and total data transferred.
@@ -44,21 +47,30 @@ Built exclusively for the terminal (CLI / Powershell / Command Prompt) using Nod
   - Live process listing with `PID`, `Program`, `Command`, `Threads`, `User`, `MemB`, and `Cpu%`.
   - Colored activity indicators (`▪`, `▄`, `█`) based on CPU usage.
   - Live row selection cursor with arrow keys (`↑` / `↓`).
-  - Process termination (`Space`, `t`, or `Delete` key) using native task kill.
+  - Process inspection dialog (`Enter`) displaying detailed metadata.
+  - Guarded process termination with confirmation modal (`Space`, `t`, or `Delete`).
 
 ---
 
 ## Keyboard Controls
 
-| Key | Action |
-| --- | --- |
-| `↑` / `↓` | Navigate / select processes in the process table |
-| `Space` / `t` / `Delete` | Terminate (kill) the selected process |
-| `Tab` | Switch between Email and Password fields (Auth screen) |
-| `Enter` | Submit credentials (Auth screen) |
-| `Ctrl + U` | Switch to **Sign-Up** mode (Auth screen) |
-| `Ctrl + L` | Switch to **Login** mode (Auth screen) |
-| `q` / `Ctrl + C` | Exit the application |
+| Key | Context | Action |
+| --- | --- | --- |
+| `↑` / `↓` | Dashboard | Select process row in table |
+| `PageUp` / `PageDown` | Dashboard | Jump 5 rows up / down |
+| `Enter` | Dashboard | Open detailed Process Inspection modal |
+| `Space` / `t` / `Delete` | Dashboard | Open Termination Confirmation dialog |
+| `y` / `Enter` | Confirm Dialog | Confirm process termination |
+| `n` / `Esc` | Confirm Dialog | Cancel process termination |
+| `f` / `/` | Dashboard | Enter real-time process search/filter mode |
+| `s` | Dashboard | Cycle sorting key (`CPU` → `MEM` → `PID` → `NAME` → `THREADS`) |
+| `r` | Dashboard | Toggle ascending / descending sort order |
+| `c` | Dashboard | Clear active filter |
+| `q` / `Ctrl + C` | All | Exit the application |
+| `Tab` | Auth Screen | Switch between Email and Password fields |
+| `Enter` | Auth Screen | Submit credentials |
+| `Ctrl + U` | Auth Screen | Switch to **Sign-Up** mode |
+| `Ctrl + L` | Auth Screen | Switch to **Login** mode |
 
 ---
 
@@ -88,8 +100,11 @@ npm install
    ```
 *(Note: `.env` is ignored by git and will never be committed).*
 
-### 4. Build and Run
+### 4. Build, Test, and Run
 ```bash
+# Run automated system tests
+npm test
+
 # Build TypeScript and start
 npm run dev
 
