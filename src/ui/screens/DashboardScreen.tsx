@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useRef, memo, useEffect, useCallback } from 'react';
-import { Box, Text, useInput, useApp, useStdout } from 'ink';
+import { Box, Text, useInput, useApp, useStdout, useStdin } from 'ink';
 import { Bar } from '../components/Bar.js';
 import { Graph, NetGraph } from '../components/Graph.js';
 import { HistoryBuffer } from '../../utils/HistoryBuffer.js';
@@ -436,29 +436,29 @@ const ProcessTable = memo(
         {/* Header tabs with active sort and filter info */}
         <Box justifyContent="space-between">
           <Box>
-            <Text bold color="white">⁴proc </Text>
+            <Text bold color="white">⁴proc</Text>
             {isFiltering ? (
-              <Text color="#50fa7b">🔍 Filter: {filterText}_</Text>
+              <Text color="#50fa7b">┌filter: {filterText}_┌</Text>
             ) : filterText ? (
-              <Text color="#8be9fd">[{filterText}] </Text>
+              <Text color="#8be9fd">┌[{filterText}]┌</Text>
             ) : (
-              <Text dimColor>┌┐filter [f]┌ </Text>
+              <Text dimColor>┌filter┌──────────────┐per-core┌reverse┌tree┌services┌</Text>
             )}
           </Box>
           <Text color="#8be9fd">
-            {sortBy.toUpperCase()} {sortDesc ? '▼' : '▲'} [s]
+            &lt; {sortBy} {sortDesc ? '▼' : '▲'} &gt;
           </Text>
         </Box>
 
         {/* Column Headers */}
         <Box marginTop={1}>
-          <Text bold color="white">{' PID'.padEnd(7)}</Text>
-          <Text bold color="white">{'PROGRAM'.padEnd(compact ? 12 : 16)}</Text>
-          {!compact && <Text bold color="white">{'COMMAND'.padEnd(16)}</Text>}
-          {!compact && <Text bold color="white">{'THR'.padEnd(5)}</Text>}
-          {!compact && <Text bold color="white">{'USER'.padEnd(9)}</Text>}
-          <Text bold color="white">{'MEM'.padEnd(8)}</Text>
-          <Text bold color="white">{'CPU%'.padStart(5)}</Text>
+          <Text bold color="white">{'Pid:'.padEnd(7)}</Text>
+          <Text bold color="white">{'Program:'.padEnd(compact ? 12 : 16)}</Text>
+          {!compact && <Text bold color="white">{'Command:'.padEnd(16)}</Text>}
+          {!compact && <Text bold color="white">{'Threads:'.padEnd(9)}</Text>}
+          {!compact && <Text bold color="white">{'User:'.padEnd(9)}</Text>}
+          <Text bold color="white">{'MemB'.padEnd(8)}</Text>
+          <Text bold color="white">{'Cpu% ↑'.padStart(6)}</Text>
         </Box>
 
         {/* Process rows */}
@@ -530,7 +530,7 @@ const ProcessTable = memo(
 
         {/* Footer */}
         <Box marginTop={1} justifyContent="space-between">
-          <Text dimColor>[↵] Info  [t/Del] Kill</Text>
+          <Text dimColor>select  ↵info  t terminate</Text>
           <Text bold color="white">
             {list.length > 0 ? `${selectedIndex + 1}/${list.length}` : '0/0'}
           </Text>
@@ -614,22 +614,23 @@ const ProcessDetailModal = memo(
 const DashboardScreen: React.FC = () => {
   const { exit } = useApp();
   const { stdout } = useStdout();
+  const { isRawModeSupported } = useStdin();
 
   const sensor = useMemo(() => new SensorService(), []);
   const procSrv = useMemo(() => new ProcessService(), []);
 
   // 1. Dynamic Terminal Dimensions with Resize Listener
   const [dimensions, setDimensions] = useState({
-    columns: stdout?.columns ?? 90,
-    rows: stdout?.rows ?? 28,
+    columns: Math.max(stdout?.columns || 90, 80),
+    rows: Math.max(stdout?.rows || 28, 24),
   });
 
   useEffect(() => {
     const handleResize = () => {
       if (stdout) {
         setDimensions({
-          columns: stdout.columns ?? 90,
-          rows: stdout.rows ?? 28,
+          columns: Math.max(stdout.columns || 90, 80),
+          rows: Math.max(stdout.rows || 28, 24),
         });
       }
     };
@@ -768,87 +769,90 @@ const DashboardScreen: React.FC = () => {
   }, [killTarget, procSrv]);
 
   // Keyboard navigation & interaction controller
-  useInput((input, key) => {
-    // 1. Confirmation Modal Active
-    if (killTarget) {
-      if (input === 'y' || key.return) {
-        void handleConfirmKill();
-      } else if (input === 'n' || key.escape) {
-        setKillTarget(null);
-      }
-      return;
-    }
-
-    // 2. Process Details Modal Active
-    if (detailTarget) {
-      if (key.escape || key.return) {
-        setDetailTarget(null);
-      }
-      return;
-    }
-
-    // 3. Search / Filter Input Mode Active
-    if (isFiltering) {
-      if (key.return || key.escape) {
-        setIsFiltering(false);
-      } else if (key.backspace || key.delete) {
-        setFilterText((prev) => prev.slice(0, -1));
-        setSelectedIndex(0);
-      } else if (input && input.length === 1) {
-        setFilterText((prev) => prev + input);
-        setSelectedIndex(0);
-      }
-      return;
-    }
-
-    // 4. Normal Navigation Mode
-    const listCount = processedList?.length ?? 0;
-
-    if (key.upArrow) {
-      setSelectedIndex((prev) => Math.max(0, prev - 1));
-    } else if (key.downArrow) {
-      setSelectedIndex((prev) => Math.min(Math.max(0, listCount - 1), prev + 1));
-    } else if (key.pageUp) {
-      setSelectedIndex((prev) => Math.max(0, prev - 5));
-    } else if (key.pageDown) {
-      setSelectedIndex((prev) => Math.min(Math.max(0, listCount - 1), prev + 5));
-    } else if (key.return) {
-      // Open process details inspection
-      if (processedList && processedList[selectedIndex]) {
-        setDetailTarget(processedList[selectedIndex]!);
-      }
-    } else if (input === ' ' || input === 't' || key.delete) {
-      // Open kill confirmation modal
-      if (processedList && processedList[selectedIndex]) {
-        const p = processedList[selectedIndex]!;
-        if (procSrv.isCriticalProcess(p.pid, p.name)) {
-          setAlertMessage({
-            text: `⚠️ Cannot terminate protected system process: PID ${p.pid} (${p.name})`,
-            isError: true,
-          });
-          setTimeout(() => setAlertMessage(null), 3000);
-        } else {
-          setKillTarget(p);
+  useInput(
+    (input, key) => {
+      // 1. Confirmation Modal Active
+      if (killTarget) {
+        if (input === 'y' || key.return) {
+          void handleConfirmKill();
+        } else if (input === 'n' || key.escape) {
+          setKillTarget(null);
         }
+        return;
       }
-    } else if (input === 'f' || input === '/') {
-      setIsFiltering(true);
-    } else if (input === 'c' && filterText) {
-      setFilterText('');
-      setSelectedIndex(0);
-    } else if (input === 's') {
-      // Cycle sorting keys
-      const keys: ProcessSortKey[] = ['cpu', 'memory', 'pid', 'name', 'threads'];
-      const nextIdx = (keys.indexOf(sortBy) + 1) % keys.length;
-      setSortBy(keys[nextIdx]!);
-      setSelectedIndex(0);
-    } else if (input === 'r') {
-      setSortDesc((prev) => !prev);
-      setSelectedIndex(0);
-    } else if (input === 'q' || (key.ctrl && input === 'c')) {
-      exit();
-    }
-  });
+
+      // 2. Process Details Modal Active
+      if (detailTarget) {
+        if (key.escape || key.return) {
+          setDetailTarget(null);
+        }
+        return;
+      }
+
+      // 3. Search / Filter Input Mode Active
+      if (isFiltering) {
+        if (key.return || key.escape) {
+          setIsFiltering(false);
+        } else if (key.backspace || key.delete) {
+          setFilterText((prev) => prev.slice(0, -1));
+          setSelectedIndex(0);
+        } else if (input && input.length === 1) {
+          setFilterText((prev) => prev + input);
+          setSelectedIndex(0);
+        }
+        return;
+      }
+
+      // 4. Normal Navigation Mode
+      const listCount = processedList?.length ?? 0;
+
+      if (key.upArrow) {
+        setSelectedIndex((prev) => Math.max(0, prev - 1));
+      } else if (key.downArrow) {
+        setSelectedIndex((prev) => Math.min(Math.max(0, listCount - 1), prev + 1));
+      } else if (key.pageUp) {
+        setSelectedIndex((prev) => Math.max(0, prev - 5));
+      } else if (key.pageDown) {
+        setSelectedIndex((prev) => Math.min(Math.max(0, listCount - 1), prev + 5));
+      } else if (key.return) {
+        // Open process details inspection
+        if (processedList && processedList[selectedIndex]) {
+          setDetailTarget(processedList[selectedIndex]!);
+        }
+      } else if (input === ' ' || input === 't' || key.delete) {
+        // Open kill confirmation modal
+        if (processedList && processedList[selectedIndex]) {
+          const p = processedList[selectedIndex]!;
+          if (procSrv.isCriticalProcess(p.pid, p.name)) {
+            setAlertMessage({
+              text: `⚠️ Cannot terminate protected system process: PID ${p.pid} (${p.name})`,
+              isError: true,
+            });
+            setTimeout(() => setAlertMessage(null), 3000);
+          } else {
+            setKillTarget(p);
+          }
+        }
+      } else if (input === 'f' || input === '/') {
+        setIsFiltering(true);
+      } else if (input === 'c' && filterText) {
+        setFilterText('');
+        setSelectedIndex(0);
+      } else if (input === 's') {
+        // Cycle sorting keys
+        const keys: ProcessSortKey[] = ['cpu', 'memory', 'pid', 'name', 'threads'];
+        const nextIdx = (keys.indexOf(sortBy) + 1) % keys.length;
+        setSortBy(keys[nextIdx]!);
+        setSelectedIndex(0);
+      } else if (input === 'r') {
+        setSortDesc((prev) => !prev);
+        setSelectedIndex(0);
+      } else if (input === 'q' || (key.ctrl && input === 'c')) {
+        exit();
+      }
+    },
+    { isActive: isRawModeSupported }
+  );
 
   // Responsive Layout Guards: If terminal is too small, render graceful warning
   if (termCols < 60 || termRows < 16) {
