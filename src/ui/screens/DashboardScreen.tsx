@@ -166,13 +166,13 @@ const CpuPanel = memo(
               <Text dimColor>Reading cores…</Text>
             )}
 
-            {/* Load AVG */}
+            {/* Load AVG (UNIX run queue load averages; unsupported on Windows kernel) */}
             <Box justifyContent="space-between" marginTop={0}>
               <Text dimColor>Load AVG:</Text>
               <Text color="white">
-                {loadAvg.avg1 !== null ? loadAvg.avg1.toFixed(2) : 'N/A'}{' '}
-                {loadAvg.avg5 !== null ? loadAvg.avg5.toFixed(2) : ''}{' '}
-                {loadAvg.avg15 !== null ? loadAvg.avg15.toFixed(2) : ''}
+                {loadAvg.avg1 !== null
+                  ? `${loadAvg.avg1.toFixed(2)}  ${loadAvg.avg5 !== null ? loadAvg.avg5.toFixed(2) : ''}  ${loadAvg.avg15 !== null ? loadAvg.avg15.toFixed(2) : ''}`.trim()
+                  : 'N/A (Windows)'}
               </Text>
             </Box>
 

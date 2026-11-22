@@ -40,7 +40,7 @@ async function runTests() {
   if (!cpu.brand || cpu.cores <= 0) throw new Error('Invalid CPU hardware info');
 
   console.log('  • CPU Utilization:', load ? `${load.length} cores reported` : 'N/A');
-  console.log('  • Load Averages:', JSON.stringify(loadAvg));
+  console.log('  • Load Averages (UNIX 1m/5m/15m):', loadAvg.avg1 !== null ? JSON.stringify(loadAvg) : 'N/A (Windows NT kernel does not calculate UNIX run-queue averages)');
   console.log('  • CPU Temperature:', temp !== null ? `${temp}°C` : 'N/A (unsupported without elevated sensor permissions)');
   
   if (!mem || mem.total <= 0) throw new Error('Invalid memory reading');

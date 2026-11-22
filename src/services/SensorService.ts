@@ -109,19 +109,22 @@ export class SensorService {
   }
 
   /**
-   * Retrieves system load averages (1m, 5m, 15m).
-   * On Windows, os.loadavg() always returns [0, 0, 0], so we provide si currentLoad avgLoad.
+   * Retrieves genuine 1m, 5m, 15m system load averages.
+   * On UNIX/Linux/macOS, this queries os.loadavg() (average number of processes in run queue).
+   * On Windows, the NT kernel does not calculate UNIX run-queue load averages,
+   * so this returns null for all fields rather than misrepresenting instantaneous
+   * CPU utilization as a one-minute system load average.
    */
   async getLoadAverages(): Promise<{ avg1: number | null; avg5: number | null; avg15: number | null }> {
+    if (os.platform() === 'win32') {
+      return { avg1: null, avg5: null, avg15: null };
+    }
     try {
       const osAvg = os.loadavg();
-      if (os.platform() !== 'win32' && osAvg && (osAvg[0]! > 0 || osAvg[1]! > 0)) {
+      if (Array.isArray(osAvg) && osAvg.length >= 3) {
         return { avg1: osAvg[0]!, avg5: osAvg[1]!, avg15: osAvg[2]! };
       }
-
-      const load = await si.currentLoad();
-      const currentAvg = typeof load.avgLoad === 'number' ? load.avgLoad : null;
-      return { avg1: currentAvg, avg5: null, avg15: null };
+      return { avg1: null, avg5: null, avg15: null };
     } catch {
       return { avg1: null, avg5: null, avg15: null };
     }
