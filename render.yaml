@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: binaire-terminal-monitor
+    runtime: docker
+    plan: free
+    region: oregon
+    envVars:
+      - key: TTYD_CREDENTIALS
+        value: admin:binaire2026
+      - key: FIREBASE_API_KEY
+        sync: false
+      - key: FIREBASE_AUTH_DOMAIN
+        sync: false
+      - key: FIREBASE_PROJECT_ID
+        sync: false
