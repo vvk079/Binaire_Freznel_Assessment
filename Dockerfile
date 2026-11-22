@@ -13,10 +13,8 @@ RUN apt-get update && \
 WORKDIR /app
 
 # Set terminal environment
-ENV NODE_ENV=production \
-    TERM=xterm-256color \
+ENV TERM=xterm-256color \
     LANG=C.UTF-8
-
 # Install dependencies (cached layer)
 COPY package.json package-lock.json ./
 RUN npm ci
@@ -29,7 +27,7 @@ COPY src/ ./src/
 RUN npm run build
 
 # Remove devDependencies for a lean runtime
-RUN npm prune --production
+ENV NODE_ENV=production
 
 # Copy startup script
 COPY entrypoint.sh ./
