@@ -1,3 +1,4 @@
+
 #!/bin/sh
 set -e
 
@@ -8,7 +9,7 @@ echo "Starting Binaire Terminal Monitor..."
 echo "Port: ${PORT}"
 
 if [ ! -f /app/dist/index.js ]; then
-    echo "ERROR: /app/dist/index.js not found!"
+    echo "ERROR: Application entry point not found"
     ls -la /app/dist
     exit 1
 fi
@@ -16,9 +17,8 @@ fi
 echo "Application entry point found."
 echo "Starting ttyd..."
 
-exec ttyd 
-    -p "$PORT" 
-    -i 0.0.0.0 
-    -W 
-    -c "$CREDENTIALS" 
-    sh -c 'node /app/dist/index.js'
+exec ttyd \
+    --port "$PORT" \
+    --writable \
+    --credential "$CREDENTIALS" \
+    sh -c 'exec node /app/dist/index.js'
